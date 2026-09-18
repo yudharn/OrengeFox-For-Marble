@@ -1,0 +1,401 @@
+name: Recovery OFOX Build (fox_12.1) — marble
+
+on:
+  workflow_dispatch:
+    inputs:
+      SYNC_URL:
+        description: 'SYNC_URL (repo sync RESMI OrangeFox Recovery Project -- fox_12.1 adalah branch STABIL resmi, bukan eksperimental seperti fox_14.1 (di-warning langsung oleh orangefox_sync.sh sendiri) atau fox_16.0 (butuh fork pihak ketiga yang terbukti tidak stabil, sudah dicoba & ditinggalkan sebelumnya))'
+        required: true
+        default: 'https://gitlab.com/OrangeFox/sync.git'
+      DEVICE_TREE_URL:
+        description: 'DEVICE_TREE_URL'
+        required: true
+        default: 'https://github.com/Ctapchuk/android_device_xiaomi_marble-OFRP'
+      DEVICE_TREE_BRANCH:
+        description: 'DEVICE_TREE_BRANCH (repo Ctapchuk/android_device_xiaomi_marble-OFRP punya branch per-manifest OrangeFox -- dikonfirmasi via git ls-remote: fox_12.1, fox_16.0, fox_16.0_dev, TIDAK ada branch "OFOX" seperti tree ingres kingD2N. Karena SYNC_URL di atas sync manifest fox_12.1, branch device tree yang dipakai juga fox_12.1. AndroidProducts.mk di branch ini hanya mendaftarkan twrp_marble; fox_marble.mk ada tapi cuma ke-inherit otomatis lewat inherit-product-if-exists di twrp_marble.mk, bukan combo lunch sendiri -- pola sama seperti twrp_ingres/fox_ingres.)'
+        required: true
+        default: 'fox_12.1'
+      DEVICE_PATH:
+        description: 'DEVICE_PATH'
+        required: true
+        default: 'device/xiaomi/marble'
+      COMMON_TREE_URL:
+        description: 'COMMON_TREE_URL (opsional — kosongkan kalau device tree marble berdiri sendiri tanpa -common tree. Dikonfirmasi dari device.mk & twrp_marble.mk tree Ctapchuk ini: yang di-inherit cuma base.mk/core_64_bit_only.mk/virtual_ab_ota.mk bawaan manifest + vendor/twrp/config/common.mk, bukan repo -common eksternal; prebuilt kernel di prebuilt/kernel-melt pun sudah menyatu di tree ini)'
+        required: false
+      COMMON_PATH:
+        description: 'COMMON_PATH (isi kalau COMMON_TREE_URL diisi)'
+        required: false
+      COMMON_TREE_BRANCH:
+        description: 'COMMON_TREE_BRANCH (opsional — kalau dikosongkan, clone pakai branch default repo COMMON_TREE_URL itu sendiri. JANGAN asumsikan sama dengan DEVICE_TREE_BRANCH, karena tidak ada jaminan keduanya pakai penamaan branch yang sama)'
+        required: false
+      DEVICE_NAME:
+        description: 'DEVICE_NAME'
+        required: true
+        default: 'marble'
+      MAKEFILE_NAME:
+        description: 'MAKEFILE_NAME (nama produk polos -- dikonfirmasi dari AndroidProducts.mk branch fox_12.1 tree ini: cuma twrp_marble yang terdaftar, fox_marble bukan combo lunch berdiri sendiri. fox_12.1 memakai format lunch lama 2-bagian "product-variant", TANPA sistem release-config yang baru berlaku mulai manifest Android 14+ (fox_14.1/16.0) -- jadi step build tidak perlu fallback 3-bagian lagi)'
+        required: true
+        default: 'twrp_marble'
+      BUILD_TARGET:
+        description: 'BUILD_TARGET'
+        required: true
+        default: 'recovery'
+      OF_MAINTAINER:
+        description: 'OF_MAINTAINER (nama yang tampil di recovery)'
+        required: true
+        default: 'Yudharn'
+      FOX_MAINTAINER_PATCH_VERSION:
+        description: 'FOX_MAINTAINER_PATCH_VERSION — ISI ANGKA POLOS SAJA (contoh: 1, 2, 3). Ini otomatis JADI suffix, jangan isi versi lengkapnya sendiri (isi "2", bukan "R11.4_2")'
+        required: true
+        default: '1'
+
+jobs:
+  build:
+    if: github.event.repository.owner.id == github.event.sender.id
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+
+    # You might want to Checkout your repo first, but not mandatory
+    - name: Check Out
+      uses: actions/checkout@v4
+
+    # fox_12.1 minimal butuh ~45GB (dokumentasi resmi OrangeFox) -- jauh lebih ringan
+    # dari fox_14.1 (~85GB), tapi sapuan pembersihan disk yang sama tetap dipakai apa
+    # adanya di bawah sebagai margin aman, bukan karena fox_12.1 terbukti butuh
+    # seagresif itu. Runner GitHub cuma ~14GB bebas dari awal, jadi tetap lebih baik
+    # dibersihkan dulu daripada mepet. "android: true" aman: itu SDK/NDK bawaan runner
+    # untuk build app Gradle, BUKAN source AOSP yang baru di-sync belakangan di step lain.
+    - name: Free disk space (pre-cleanup)
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    # Cleanup The Actions Workspace Using Custom Composite Run Actions
+    - name: Cleanup
+      uses: rokibhasansagar/slimhub_actions@main
+
+    - name: Disk space check (setelah cleanup)
+      run: |
+        echo "== df -h setelah free-disk-space + slimhub =="
+        df -h
+
+    - name: Initialize workspace
+      run: |
+        mkdir workspace
+        cd workspace
+        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
+      id: pwd
+
+    - name: Prepare the build environment
+      run: |
+        sudo apt update && sudo apt upgrade -y
+        DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
+            linux-modules-extra-$(uname -r) \
+            git python3 tar aria2
+        git clone https://gitlab.com/OrangeFox/misc/scripts
+        cd scripts
+        sudo bash setup/android_build_env.sh
+        sed -i 's/cd -/cd ../g' setup/install_android_sdk.sh
+        sudo bash setup/install_android_sdk.sh
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    # fox_12.1 = basis Android 12, generasi toolchain yang sama dengan workflow
+    # fox_12.1 lama (JDK 11 terbukti cukup di situ) -- BEDA dari fox_14.1 yang butuh
+    # JDK 17 karena Google mewajibkannya mulai era Android 14 "Trunk Stable Project",
+    # apalagi fox_16.0 yang butuh JDK 21. Kalau build log tetap minta versi lain,
+    # kabari saya.
+    - name: Install OpenJDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '11'
+
+    - name: Setup SSH Keys
+      if: ${{ startsWith(github.event.inputs.SYNC_URL, 'git@') || 
+          startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@') ||
+          startsWith(github.event.inputs.COMMON_TREE_URL, 'git@') }}
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+          ssh-private-key: |
+            ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Sync OrangeFox sources and minimal manifest
+      id: sync
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}
+        git clone ${{ github.event.inputs.SYNC_URL }} sync
+        cd sync
+        # repo sync (orangefox_sync.sh) di-clone FRESH tiap run -- BUKAN cache -- jadi
+        # otomatis selalu pakai commit terbaru di HEAD master saat run ini jalan, tanpa
+        # perlu campur tangan manual. Repo ini terus di-update oleh OrangeFox (lihat
+        # https://gitlab.com/OrangeFox/sync/-/commits/master), jadi commit PERSIS yang
+        # kepakai tetap dicatat di sini + di body Release -- supaya kalau suatu saat
+        # build berperilaku beda dari biasanya, gampang dilacak apa yang berubah antara
+        # commit lama dan commit baru di riwayat tersebut.
+        SYNC_COMMIT=$(git rev-parse HEAD)
+        SYNC_COMMIT_DATE=$(git log -1 --format=%cI)
+        SYNC_COMMIT_MSG=$(git log -1 --format=%s)
+        echo "sync-commit=$SYNC_COMMIT" >> $GITHUB_OUTPUT
+        echo "== Commit repo sync yang dipakai build ini: $SYNC_COMMIT ($SYNC_COMMIT_DATE) =="
+        echo "== Pesan commit: $SYNC_COMMIT_MSG =="
+        echo "== Riwayat lengkap: https://gitlab.com/OrangeFox/sync/-/commits/master =="
+        TARGET=${{ steps.pwd.outputs.workspace-folder }}/fox_12.1
+        success=0
+        for attempt in 1 2 3 4 5; do
+          echo "== Sync attempt $attempt/5 =="
+          ./orangefox_sync.sh --branch 12.1 --path "$TARGET" || true
+          # orangefox_sync.sh terbukti exit 0 bahkan saat --branch tidak dikenali
+          # (lihat riwayat percobaan fox_16.0 sebelumnya) -- exit code sendirian
+          # TIDAK bisa dipercaya, jadi verifikasi manual tetap dipertahankan di
+          # bawah meski "12.1" adalah branch STABIL resmi orangefox_sync.sh (bukan
+          # EXPERIMENTAL seperti fox_14.1, apalagi fox_16.0 yang butuh fork pihak
+          # ketiga tidak resmi): build/envsetup.sh wajib ada kalau manifest benar-
+          # benar ter-sync (dan memang dibutuhkan lagi nanti di step "Building
+          # recovery"). Retry 5x di bawah murni jaga-jaga jaringan CI, bukan jaga-
+          # jaga sync lambat seperti kasus fox_14.1.
+          if [ -f "$TARGET/build/envsetup.sh" ]; then
+            success=1
+            break
+          fi
+          echo "Sync attempt $attempt tidak menghasilkan manifest yang valid (build/envsetup.sh tidak ada). Retry in 30s..."
+          sleep 30
+        done
+        if [ "$success" -ne 1 ]; then
+          echo "::error::Semua percobaan sync gagal -- $TARGET/build/envsetup.sh tidak pernah ada."
+          exit 1
+        fi
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    # Diagnostik ringan: kalau step berikutnya gagal karena kehabisan ruang/RAM, angka
+    # pastinya langsung kelihatan di log tanpa perlu menebak.
+    - name: Check disk & memory after sync
+      if: always()
+      run: |
+        echo "== Disk =="
+        df -h
+        echo "== Memory =="
+        free -h
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Clone device tree
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_12.1
+        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Clone common tree
+      # CATATAN PERBAIKAN: versi workflow paling lama selalu pakai DEVICE_TREE_BRANCH juga
+      # untuk clone common tree (tidak ada input branch terpisah). Itu cuma "aman" selama
+      # COMMON_TREE_URL kosong (kondisi default kalian saat ini). Begitu diisi sungguhan,
+      # kalau branch common tree-nya beda nama dari branch device tree, clone ini gagal fatal
+      # dan job berhenti. Sekarang dipisah jadi COMMON_TREE_BRANCH sendiri -- kalau
+      # dikosongkan, git clone tanpa -b sehingga otomatis memakai default branch repo tersebut.
+      if: |
+        github.event.inputs.COMMON_TREE_URL != ''
+        && github.event.inputs.COMMON_PATH != ''
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_12.1
+        if [ -n "${{ github.event.inputs.COMMON_TREE_BRANCH }}" ]; then
+          git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.COMMON_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
+        else
+          git clone ${{ github.event.inputs.COMMON_TREE_URL }} ./${{ github.event.inputs.COMMON_PATH }}
+        fi
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Workaround known-broken modules unrelated to recovery
+      run: |
+        # Patch openaes di bawah ORIGINAL-nya justru dari sini (fox_12.1) -- toolchain-nya
+        # tidak kenal warning group "-Wdeprecated-non-prototype" tanpa "-Wunknown-warning-option"
+        # didaftar lebih dulu, jadi jadi error -Werror. Tiap langkah di bawah tetap cek dulu
+        # apakah file/folder targetnya ADA sebelum diubah, supaya kalau strukturnya ternyata
+        # beda di source yang di-sync sekarang, langkah ini otomatis jadi no-op (bukan error
+        # fatal). Kalau build.log menunjukkan error deprecated-non-prototype/unknown-warning-
+        # option di path lain, tambahkan path itu di sini.
+        TREE=${{ steps.pwd.outputs.workspace-folder }}/fox_12.1
+
+        if [ -d "$TREE/external/se_omapi" ]; then
+          rm -rf "$TREE/external/se_omapi"
+          mkdir -p "$TREE/external/se_omapi"
+          printf 'soong_namespace {\n}\n' > "$TREE/external/se_omapi/Android.bp"
+          echo "Distub: $TREE/external/se_omapi"
+        else
+          echo "::notice::external/se_omapi tidak ada di fox_12.1 -- lewati"
+        fi
+
+        if [ -d "$TREE/hardware/interfaces/vibrator/aidl/default/example_java_client" ]; then
+          rm -rf "$TREE/hardware/interfaces/vibrator/aidl/default/example_java_client"
+          echo "Dihapus: hardware/interfaces/vibrator/aidl/default/example_java_client"
+        fi
+
+        for f in \
+          bootable/recovery/openaes/src/oaes_lib.c \
+          bootable/recovery/openaes/src/isaac/rand.h \
+          bootable/recovery/openaes/src/isaac/rand.c
+        do
+          F="$TREE/$f"
+          if [ -f "$F" ]; then
+            if ! grep -q 'Wunknown-warning-option' "$F"; then
+              sed -i '1i #pragma clang diagnostic ignored "-Wunknown-warning-option"\n#pragma clang diagnostic ignored "-Wdeprecated-non-prototype"' "$F"
+              echo "Patched: $F"
+            else
+              echo "$F sudah dipatch sebelumnya, lewati"
+            fi
+          else
+            echo "::notice::$F tidak ditemukan -- kemungkinan struktur source openaes di manifest ini berbeda, atau masalah ini memang sudah tidak ada. Aman diabaikan."
+          fi
+        done
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    # Swap TIDAK dinaikkan meski OrangeFox mendokumentasikan rekomendasi RAM tersendiri --
+    # swap file dari pierotofy ini memakan ruang DISK, dan disk (bukan RAM) yang jadi risiko
+    # paling kritis di runner GitHub (~14GB bebas dari awal). Menaikkan swap di sini cuma
+    # memperparah risiko yang justru paling berbahaya. Untuk RAM virtual tambahan, zram di
+    # bawah (berbasis kompresi RAM, tidak memakan disk) menambah ~50% kapasitas RAM efektif
+    # tanpa mengorbankan ruang build.
+    - name: Set Swap Space
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 12
+
+    - name: Enable zram swap
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y zram-tools
+        echo -e 'ALGO=lz4\nPERCENT=50\nPRIORITY=100' | sudo tee /etc/default/zramswap
+        sudo systemctl restart zramswap.service
+        echo "== swap layout =="
+        swapon --show
+        free -h
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    # Cek disk PERSIS sebelum tahap terberat (build). Kalau nanti build gagal dengan "No
+    # space left on device", angka di sini + di build.log adalah bukti pertama yang dicek.
+    - name: Disk space check (sebelum build)
+      run: |
+        echo "== df -h =="
+        df -h
+        echo "== 20 folder terbesar di source tree =="
+        du -sh ${{ steps.pwd.outputs.workspace-folder }}/fox_12.1/* 2>/dev/null | sort -rh | head -20
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Building recovery
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_12.1
+        set +e
+        source build/envsetup.sh
+        export ALLOW_MISSING_DEPENDENCIES=true
+        export LC_ALL="C"
+        export OF_MAINTAINER="${{ github.event.inputs.OF_MAINTAINER }}"
+        export FOX_MAINTAINER_PATCH_VERSION="${{ github.event.inputs.FOX_MAINTAINER_PATCH_VERSION }}"
+        # FOX_VARIANT/FOX_VANILLA_BUILD sengaja tidak di-export/override lagi -- dibiarkan
+        # unset supaya OrangeFox jalan dengan varian default bawaannya sendiri
+        # (HyperOS/stock-tuned), tanpa perlu pilihan HyperOS/Vanilla per-dispatch lagi.
+        # OF_SCREEN_H sebenarnya sudah didefinisikan di fox_marble.mk tree ini (OF_SCREEN_H := 2400,
+        # ke-inherit ke twrp_marble.mk saat lunch) -- dikonfirmasi langsung dari file tsb, cocok dengan
+        # panel asli marble 1080x2400 AMOLED. Tetap diulang eksplisit di sini sebagai jaring pengaman,
+        # karena vendorsetup.sh device ini (FDEVICE="marble") masih punya syarat pengecekan yang sama
+        # ($1/$FOX_BUILD_DEVICE harus cocok "marble") yang TIDAK terjamin selalu terpicu saat
+        # envsetup.sh source otomatis di CI. Layar 1080x2400 = 20:9.
+        export OF_SCREEN_H=2400
+
+        PRODUCT="${{ github.event.inputs.MAKEFILE_NAME }}"
+        VARIANT="eng"
+
+        # fox_12.1 pakai format lunch lama "product-variant" (2-bagian) -- TIDAK ada sistem
+        # release-config (product-release-variant, 3-bagian) yang baru berlaku mulai manifest
+        # Android 14+ (fox_14.1/16.0). Jadi tidak perlu fallback ke release_config_map.textproto
+        # di sini seperti pada workflow fox_14.1.
+        echo "== lunch ${PRODUCT}-${VARIANT} =="
+        if ! lunch "${PRODUCT}-${VARIANT}"; then
+          echo "::error::lunch ${PRODUCT}-${VARIANT} gagal. fox_12.1 seharusnya memakai format lunch lama 2-bagian -- cek apakah MAKEFILE_NAME benar terdaftar di AndroidProducts.mk tree ini, atau apakah manifest yang ter-sync ternyata bukan benar-benar fox_12.1."
+          exit 1
+        fi
+
+        set -e
+        set -o pipefail
+        ( make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all) ) 2>&1 | tee ${{ steps.pwd.outputs.workspace-folder }}/build.log
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Upload build log (jika build gagal)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log-${{ github.run_id }}
+        path: ${{ steps.pwd.outputs.workspace-folder }}/build.log
+        retention-days: 7
+
+    # Versi lama cuma glob satu level ("$OUT_DIR"/*.img) dan gagal padahal build SUKSES --
+    # build.log jelas mencatat "Finished building OrangeFox" + path Recovery image/zip, tapi
+    # $OUT_DIR (out/target/product/marble) ternyata berisi folder "target/" bersarang: hasil
+    # akhir tools packaging OrangeFox (sign_zip.sh dkk) mendarat di
+    # out/target/product/marble/target/product/marble/, bukan langsung di $OUT_DIR. Sumber
+    # paling akurat untuk path final adalah pengumuman OrangeFox sendiri di build.log, jadi
+    # itu yang dibaca duluan -- bukan re-derive path sendiri. Fallback pencarian rekursif
+    # (find, bukan glob satu level) dipertahankan untuk jaga-jaga kalau format log berubah --
+    # pola yang sama seperti temuan actions/download-artifact@v8 sebelumnya.
+    - name: Verify build artifacts
+      id: verify
+      run: |
+        BUILD_LOG="${{ steps.pwd.outputs.workspace-folder }}/build.log"
+        PRODUCT_OUT="${{ steps.pwd.outputs.workspace-folder }}/fox_12.1/out/target/product/${{ github.event.inputs.DEVICE_NAME }}"
+
+        IMG_PATH=$(grep -m1 '^Recovery image:' "$BUILD_LOG" | sed 's/^Recovery image:[[:space:]]*//')
+        ZIP_PATH=$(grep -m1 '^Recovery zip:' "$BUILD_LOG" | sed 's/^Recovery zip:[[:space:]]*//')
+
+        if [ -z "$IMG_PATH" ] || [ ! -f "$IMG_PATH" ]; then
+          IMG_PATH=$(find "$PRODUCT_OUT" -type f -iname 'OrangeFox-*.img' 2>/dev/null | head -n1)
+        fi
+        if [ -z "$ZIP_PATH" ] || [ ! -f "$ZIP_PATH" ]; then
+          ZIP_PATH=$(find "$PRODUCT_OUT" -type f -iname 'OrangeFox-*.zip' 2>/dev/null | head -n1)
+        fi
+
+        echo "img: ${IMG_PATH:-<tidak ditemukan>}"
+        echo "zip: ${ZIP_PATH:-<tidak ditemukan>}"
+
+        if [ -z "$IMG_PATH" ] || [ ! -f "$IMG_PATH" ] || [ -z "$ZIP_PATH" ] || [ ! -f "$ZIP_PATH" ]; then
+          echo "::error::Tidak bisa menemukan file .img/.zip OrangeFox yang valid (lewat build.log maupun pencarian rekursif di $PRODUCT_OUT)."
+          echo "== Struktur $PRODUCT_OUT sampai 3 level (untuk debug) =="
+          find "$PRODUCT_OUT" -maxdepth 3 2>/dev/null
+          exit 1
+        fi
+
+        echo "img-path=$IMG_PATH" >> "$GITHUB_OUTPUT"
+        echo "zip-path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          ${{ steps.verify.outputs.img-path }}
+          ${{ steps.verify.outputs.zip-path }}
+        name: ${{ github.event.inputs.DEVICE_NAME }}-fox12-${{ github.run_id }}
+        tag_name: ${{ github.run_id }}
+        fail_on_unmatched_files: true
+        body: |
+          | | |
+          |---|---|
+          | 📱 **Device** | POCO F5 (`${{ github.event.inputs.DEVICE_NAME }}`) |
+          | 🦊 **Recovery** | OrangeFox Recovery Project |
+          | 🌿 **Manifest** | fox_12.1 (Android 12 · resmi & STABIL) |
+          | 🎯 **Build Target** | `${{ github.event.inputs.BUILD_TARGET }}image` |
+          | 🎨 **Variant** | Default (HyperOS/stock-tuned) |
+          | 📦 **Device Tree** | ${{ github.event.inputs.DEVICE_TREE_URL }} |
+          | 🌿 **Tree Branch** | `${{ github.event.inputs.DEVICE_TREE_BRANCH }}` |
+          | 🔩 **Kernel** | Ikut kernel ROM aktif di boot_a/boot_b (HyperOS/ROM custom AOSP-GKI) — recovery ini tidak membawa kernel sendiri |
+          | 🛠️ **Toolchain** | OpenJDK 11 (Zulu) |
+          | 🔗 **Sync Commit** | [`${{ steps.sync.outputs.sync-commit }}`](https://gitlab.com/OrangeFox/sync/-/commit/${{ steps.sync.outputs.sync-commit }}) |
+          | 👤 **Maintainer** | ${{ github.event.inputs.OF_MAINTAINER }} (patch ${{ github.event.inputs.FOX_MAINTAINER_PATCH_VERSION }}) |
+
+          ---
+          ### ✨ OrangeFox Recovery — marble ✨
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
