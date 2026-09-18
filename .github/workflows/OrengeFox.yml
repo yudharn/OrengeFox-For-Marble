@@ -122,7 +122,7 @@ jobs:
       if: ${{ startsWith(github.event.inputs.SYNC_URL, 'git@') || 
           startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@') ||
           startsWith(github.event.inputs.COMMON_TREE_URL, 'git@') }}
-      uses: webfactory/ssh-agent@v0.9.0
+      uses: webfactory/ssh-agent@v0.10.0
       with:
           ssh-private-key: |
             ${{ secrets.SSH_PRIVATE_KEY }}
