@@ -113,7 +113,7 @@ jobs:
     # apalagi fox_16.0 yang butuh JDK 21. Kalau build log tetap minta versi lain,
     # kabari saya.
     - name: Install OpenJDK
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v6
       with:
         distribution: 'zulu'
         java-version: '11'
