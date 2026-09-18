@@ -1,6 +1,8 @@
 <p align="center">
   
   ![Orengefox For Marble](assets/social-preview.png)
+
+<p align="center">
   
   <img src="https://img.shields.io/badge/OrangeFox-Recovery-FF6E1E?style=for-the-badge&logo=android&logoColor=white" />
   <img src="https://img.shields.io/badge/Device-marble%20%7C%20marblein-blue?style=for-the-badge" />
