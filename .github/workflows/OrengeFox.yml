@@ -312,12 +312,12 @@ jobs:
           |---|---|
           | 📱 **Device** | POCO F5 (`${{ github.event.inputs.DEVICE_NAME }}`) |
           | 🦊 **Recovery** | OrangeFox Recovery Project |
-          | 🌿 **Manifest** | fox_12.1 (Android 12 · resmi & STABIL) |
+          | 🌿 **Manifest** | fox_12.1 (STABLE) |
           | 🎯 **Build Target** | `${{ github.event.inputs.BUILD_TARGET }}image` |
           | 🎨 **Variant** | Default (HyperOS/stock-tuned) |
           | 📦 **Device Tree** | ${{ github.event.inputs.DEVICE_TREE_URL }} |
           | 🌿 **Tree Branch** | `${{ github.event.inputs.DEVICE_TREE_BRANCH }}` |
-          | 🔩 **Kernel** | Ikut kernel ROM aktif di boot_a/boot_b (HyperOS/ROM custom AOSP-GKI) — recovery ini tidak membawa kernel sendiri |
+          | 🔩 **Kernel** | Uses the active ROM's kernel in boot_a/boot_b (HyperOS/AOSP-GKI custom ROMs) |
           | 🛠️ **Toolchain** | OpenJDK 11 (Zulu) |
           | 🔗 **Sync Commit** | [`${{ steps.sync.outputs.sync-commit }}`](https://gitlab.com/OrangeFox/sync/-/commit/${{ steps.sync.outputs.sync-commit }}) |
           | 👤 **Maintainer** | ${{ github.event.inputs.OF_MAINTAINER }} (patch ${{ github.event.inputs.FOX_MAINTAINER_PATCH_VERSION }}) |
