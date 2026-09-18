@@ -59,7 +59,7 @@ jobs:
 
     # You might want to Checkout your repo first, but not mandatory
     - name: Check Out
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     # fox_12.1 minimal butuh ~45GB (dokumentasi resmi OrangeFox) -- jauh lebih ringan
     # dari fox_14.1 (~85GB), tapi sapuan pembersihan disk yang sama tetap dipakai apa
