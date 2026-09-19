@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/License-Apache%202.0-green?style=for-the-badge" />
 </p>
 
-<h1 align="center">OrangeFox Recovery — Xiaomi Marble</h1>
+<h1 align="center">OrangeFox Recovery — For Marble</h1>
 <p align="center">
 <b>OrangeFox Recovery Project (OFRP)</b> device tree for <b>Redmi Note 12 Turbo</b> (<code>marble</code>) & <b>POCO F5</b> (<code>marblein</code>)
 </p>
