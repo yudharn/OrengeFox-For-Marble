@@ -43,7 +43,7 @@ This device tree is based on **[Ctapchuk/android_device_xiaomi_marble-OFRP](http
 3. Boot into fastboot mode: `adb reboot bootloader`
 4. Flash it to the boot/recovery partition:
    ```bash
-   fastboot flash boot orangefox-marble.img
+   fastboot flash recovery orangefox-marble.img
    ```
 5. Reboot into recovery to verify:
    ```bash
