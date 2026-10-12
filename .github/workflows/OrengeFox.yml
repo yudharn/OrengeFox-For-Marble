@@ -64,7 +64,7 @@ jobs:
     - name: Free disk space (pre-cleanup)
       uses: jlumbroso/free-disk-space@main
       with:
-        tool-cache: true
+        preinstalled-runtimes: true
         android: true
         dotnet: true
         haskell: true
@@ -94,11 +94,9 @@ jobs:
         DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
             linux-modules-extra-$(uname -r) \
             git python3 tar aria2
-        git clone https://gitlab.com/OrangeFox/misc/scripts
+        git clone https://gitlab.com/OrangeFox/misc/scripts.git
         cd scripts
         sudo bash setup/android_build_env.sh
-        sed -i 's/cd -/cd ../g' setup/install_android_sdk.sh
-        sudo bash setup/install_android_sdk.sh
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Install OpenJDK
@@ -185,7 +183,7 @@ jobs:
           printf 'soong_namespace {\n}\n' > "$TREE/external/se_omapi/Android.bp"
           echo "Distub: $TREE/external/se_omapi"
         else
-          echo "::notice::external/se_omapi tidak ada di fox_12.1 -- lewati"
+          echo "external/se_omapi tidak ada di fox_12.1 -- lewati"
         fi
 
         if [ -d "$TREE/hardware/interfaces/vibrator/aidl/default/example_java_client" ]; then
@@ -207,9 +205,22 @@ jobs:
               echo "$F sudah dipatch sebelumnya, lewati"
             fi
           else
-            echo "::notice::$F tidak ditemukan -- kemungkinan struktur source openaes di manifest ini berbeda, atau masalah ini memang sudah tidak ada. Aman diabaikan."
+            echo "$F tidak ditemukan -- lewati"
           fi
         done
+
+        # BOARD_PLAT_*_SEPOLICY_DIR deprecated -> SYSTEM_EXT_*_SEPOLICY_DIRS (system/sepolicy cuma meneruskan ke var baru, hasil identik)
+        cd "$TREE"
+        files=$(grep -rlE --include='*.mk' '^\s*BOARD_PLAT_(PUBLIC|PRIVATE)_SEPOLICY_DIR\s*[:+?]?=' device vendor bootable 2>/dev/null || true)
+        for f in $files; do
+          sed -i -E 's/^(\s*)BOARD_PLAT_(PUBLIC|PRIVATE)_SEPOLICY_DIR\s*[:+?]?=/\1SYSTEM_EXT_\2_SEPOLICY_DIRS +=/' "$f"
+          echo "Patched sepolicy var: $f"
+        done
+        if [ -z "$files" ]; then echo "BOARD_PLAT_*_SEPOLICY_DIR tidak ditemukan -- lewati"; fi
+
+        # $(warning) informatif bawaan OrangeFox -> $(info): output tetap ada, tidak jadi annotation
+        sed -i -E 's/\$\(warning ("FOX_MISCELLANEOUS_ROOT_DIRECTORY" is used)/$(info \1/' bootable/recovery/orangefox.mk 2>/dev/null || true
+        sed -i -E 's/\$\(warning (vendor_hw:)/$(info \1/' bootable/recovery/prebuilt/Android.mk 2>/dev/null || true
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Set Swap Space
