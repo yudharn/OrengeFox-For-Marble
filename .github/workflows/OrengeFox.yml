@@ -61,8 +61,10 @@ jobs:
     - name: Check Out
       uses: actions/checkout@v7
 
+    # Third-party actions di-pin ke SHA (bukan @main/@master) karena job ini punya token contents:write.
+    # SHA di bawah = versi yang jalan di build sukses 2026-10-12. Dependabot (github-actions) akan menaikkannya.
     - name: Free disk space (pre-cleanup)
-      uses: jlumbroso/free-disk-space@main
+      uses: jlumbroso/free-disk-space@36e9a5af4eddb91fc11aec4c6f6f79b3cc0cb523 # main
       with:
         preinstalled-runtimes: true
         android: true
@@ -74,7 +76,7 @@ jobs:
 
     # Cleanup The Actions Workspace Using Custom Composite Run Actions
     - name: Cleanup
-      uses: rokibhasansagar/slimhub_actions@main
+      uses: rokibhasansagar/slimhub_actions@c2a6e4317d3de2b623ac7395b05e9d2149e8289b # main
 
     - name: Disk space check (setelah cleanup)
       run: |
@@ -106,7 +108,7 @@ jobs:
         java-version: '11'
 
     - name: Setup SSH Keys
-      if: ${{ startsWith(github.event.inputs.SYNC_URL, 'git@') || 
+      if: ${{ startsWith(github.event.inputs.SYNC_URL, 'git@') ||
           startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@') ||
           startsWith(github.event.inputs.COMMON_TREE_URL, 'git@') }}
       uses: webfactory/ssh-agent@v0.10.0
@@ -128,10 +130,12 @@ jobs:
         echo "== Pesan commit: $SYNC_COMMIT_MSG =="
         echo "== Riwayat lengkap: https://gitlab.com/OrangeFox/sync/-/commits/master =="
         TARGET=${{ steps.pwd.outputs.workspace-folder }}/fox_12.1
+        SYNC_LOG=${{ steps.pwd.outputs.workspace-folder }}/sync.log
+        : > "$SYNC_LOG"
         success=0
         for attempt in 1 2 3 4 5; do
           echo "== Sync attempt $attempt/5 =="
-          ./orangefox_sync.sh --branch 12.1 --path "$TARGET" || true
+          ./orangefox_sync.sh --branch 12.1 --path "$TARGET" 2>&1 | tee -a "$SYNC_LOG" || true
           if [ -f "$TARGET/build/envsetup.sh" ]; then
             success=1
             break
@@ -143,6 +147,11 @@ jobs:
           echo "::error::Semua percobaan sync gagal -- $TARGET/build/envsetup.sh tidak pernah ada."
           exit 1
         fi
+        # orangefox_sync.sh tetap lanjut walau patch gagal (mis. patch-vendor-twrp-fox_12.1.diff tidak ada di repo sync).
+        # Jadikan terlihat sebagai annotation supaya tidak tenggelam di log panjang.
+        if grep -q 'Failed to patch' "$SYNC_LOG"; then
+          echo "::warning::orangefox_sync.sh melaporkan patch gagal: $(grep -m3 -E 'Failed to patch|No such file or directory' "$SYNC_LOG" | tr '\n' ' ')"
+        fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Check disk & memory after sync
@@ -152,6 +161,33 @@ jobs:
         df -h
         echo "== Memory =="
         free -h
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    # Fallback untuk patch-vendor-twrp-fox_12.1.diff yang hilang dari repo sync (build 2026-10-12: "Failed to patch
+    # the twrp-12.1 vendor/twrp"). Isi patch aslinya cuma 1 baris: tambah
+    #   include bootable/recovery/orangefox_soong.mk
+    # sebelum "SOONG_CONFIG_NAMESPACES += twrpVarsPlugin" di vendor/twrp/config/BoardConfigSoong.mk.
+    # Idempotent: tidak melakukan apa-apa kalau sudah ada, atau kalau file yang dibutuhkan tidak ada.
+    - name: Apply vendor/twrp soong include (fallback)
+      run: |
+        TREE=${{ steps.pwd.outputs.workspace-folder }}/fox_12.1
+        F="$TREE/vendor/twrp/config/BoardConfigSoong.mk"
+        SOONG_MK="$TREE/bootable/recovery/orangefox_soong.mk"
+        if [ ! -f "$F" ]; then
+          echo "::warning::$F tidak ada -- fallback dilewati"; exit 0
+        fi
+        if grep -q 'orangefox_soong.mk' "$F"; then
+          echo "vendor/twrp sudah meng-include orangefox_soong.mk -- tidak perlu fallback"; exit 0
+        fi
+        if [ ! -f "$SOONG_MK" ]; then
+          echo "::warning::$SOONG_MK tidak ada -- include tidak ditambahkan (bisa bikin build error)"; exit 0
+        fi
+        if ! grep -q '^SOONG_CONFIG_NAMESPACES += twrpVarsPlugin' "$F"; then
+          echo "::warning::anchor 'SOONG_CONFIG_NAMESPACES += twrpVarsPlugin' tidak ketemu di $F -- fallback dilewati"; exit 0
+        fi
+        sed -i '0,/^SOONG_CONFIG_NAMESPACES += twrpVarsPlugin/s//include bootable\/recovery\/orangefox_soong.mk\nSOONG_CONFIG_NAMESPACES += twrpVarsPlugin/' "$F"
+        echo "== Hasil patch fallback =="
+        grep -n -B1 -A1 'orangefox_soong.mk' "$F"
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Clone device tree
@@ -209,14 +245,11 @@ jobs:
           fi
         done
 
-        # BOARD_PLAT_*_SEPOLICY_DIR deprecated -> SYSTEM_EXT_*_SEPOLICY_DIRS (system/sepolicy cuma meneruskan ke var baru, hasil identik)
+        # CATATAN: patch BOARD_PLAT_*_SEPOLICY_DIR dihapus. Di build 2026-10-12 patch itu tidak menemukan file
+        # apa pun, dan 2 warning deprecated tetap muncul karena dibaca oleh build system AOSP sendiri
+        # (build/make/core/soong_config.mk:194, system/sepolicy/Android.mk:57), bukan oleh device tree.
+        # Kedua warning itu tidak berbahaya.
         cd "$TREE"
-        files=$(grep -rlE --include='*.mk' '^\s*BOARD_PLAT_(PUBLIC|PRIVATE)_SEPOLICY_DIR\s*[:+?]?=' device vendor bootable 2>/dev/null || true)
-        for f in $files; do
-          sed -i -E 's/^(\s*)BOARD_PLAT_(PUBLIC|PRIVATE)_SEPOLICY_DIR\s*[:+?]?=/\1SYSTEM_EXT_\2_SEPOLICY_DIRS +=/' "$f"
-          echo "Patched sepolicy var: $f"
-        done
-        if [ -z "$files" ]; then echo "BOARD_PLAT_*_SEPOLICY_DIR tidak ditemukan -- lewati"; fi
 
         # $(warning) informatif bawaan OrangeFox -> $(info): output tetap ada, tidak jadi annotation
         sed -i -E 's/\$\(warning ("FOX_MISCELLANEOUS_ROOT_DIRECTORY" is used)/$(info \1/' bootable/recovery/orangefox.mk 2>/dev/null || true
@@ -224,7 +257,7 @@ jobs:
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Set Swap Space
-      uses: pierotofy/set-swap-space@master
+      uses: pierotofy/set-swap-space@fc79b3f67fa8a838184ce84a674ca12238d2c761 # master
       with:
         swap-size-gb: 12
 
@@ -269,7 +302,8 @@ jobs:
 
         set -e
         set -o pipefail
-        ( make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all) ) 2>&1 | tee ${{ steps.pwd.outputs.workspace-folder }}/build.log
+        # Tidak perlu "make clean": runner baru, folder out/ belum ada.
+        mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all) 2>&1 | tee ${{ steps.pwd.outputs.workspace-folder }}/build.log
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Upload build log (jika build gagal)
@@ -289,6 +323,8 @@ jobs:
         IMG_PATH=$(grep -m1 '^Recovery image:' "$BUILD_LOG" | sed 's/^Recovery image:[[:space:]]*//')
         ZIP_PATH=$(grep -m1 '^Recovery zip:' "$BUILD_LOG" | sed 's/^Recovery zip:[[:space:]]*//')
 
+        # Catatan: setelah lunch, OUT_DIR berubah ke $PRODUCT_OUT, jadi hasil build ada di
+        # $PRODUCT_OUT/target/product/<device>/ (path ganda). Fallback find di bawah menutupi ini.
         if [ -z "$IMG_PATH" ] || [ ! -f "$IMG_PATH" ]; then
           IMG_PATH=$(find "$PRODUCT_OUT" -type f -iname 'OrangeFox-*.img' 2>/dev/null | head -n1)
         fi
@@ -309,19 +345,25 @@ jobs:
         echo "img-path=$IMG_PATH" >> "$GITHUB_OUTPUT"
         echo "zip-path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
 
+        # File .md5 dibuat oleh build OrangeFox; ikut diupload kalau ada.
+        if [ -f "$IMG_PATH.md5" ]; then echo "img-md5-path=$IMG_PATH.md5" >> "$GITHUB_OUTPUT"; fi
+        if [ -f "$ZIP_PATH.md5" ]; then echo "zip-md5-path=$ZIP_PATH.md5" >> "$GITHUB_OUTPUT"; fi
+
     - name: Upload to Release
       uses: softprops/action-gh-release@v3
       with:
         files: |
           ${{ steps.verify.outputs.img-path }}
           ${{ steps.verify.outputs.zip-path }}
+          ${{ steps.verify.outputs.img-md5-path }}
+          ${{ steps.verify.outputs.zip-md5-path }}
         name: ${{ github.event.inputs.DEVICE_NAME }}-fox12-${{ github.run_id }}
         tag_name: ${{ github.run_id }}
         fail_on_unmatched_files: true
         body: |
           | | |
           |---|---|
-          | 📱 **Device** | POCO F5 (`${{ github.event.inputs.DEVICE_NAME }}`) |
+          | 📱 **Device** | POCO F5 / Redmi Note 12 Turbo (`${{ github.event.inputs.DEVICE_NAME }}`) |
           | 🦊 **Recovery** | OrangeFox Recovery Project |
           | 🌿 **Manifest** | fox_12.1 (STABLE) |
           | 🎯 **Build Target** | `${{ github.event.inputs.BUILD_TARGET }}image` |
@@ -337,4 +379,4 @@ jobs:
           ### ✨ OrangeFox Recovery — marble ✨
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
+
