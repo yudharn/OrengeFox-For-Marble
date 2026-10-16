@@ -42,32 +42,21 @@ The device tree used by default is **[Ctapchuk/android_device_xiaomi_marble-OFRP
 
 1. Open the **Actions** tab → **Recovery OFOX Build (fox_12.1) — marble** → **Run workflow**.
 2. Keep the defaults, or change the inputs (device tree URL/branch, maintainer name, patch version).
-3. Wait for the job to finish (about 1 hour). The `.img`, `.zip` and their `.md5` files appear under **Releases**.
+3. Wait for the job to finish (about 1 hour). The recovery `.zip` appears under **Releases**.
 
 Only the repository owner can start the workflow. If a build fails, the full `build.log` is attached to the run as an artifact for 7 days.
 
 ## 📥 Installation
 
-Release files are named like `OrangeFox-R12.0_<patch>-Unofficial-marble.img` / `.zip`.
+Each release contains one file: the flashable **OrangeFox recovery `.zip`**, named like
+`OrangeFox-R12.0_<patch>-Unofficial-marble.zip`.
 
-**First install**
+1. Download the `.zip` from **Releases**.
+2. Boot into a working custom recovery (for example an older OrangeFox or TWRP build for `marble`).
+3. Flash the `.zip`.
+4. Reboot back into recovery to verify.
 
-1. Download the `.img` from Releases.
-2. Boot into fastboot mode: `adb reboot bootloader`
-3. Flash it to the recovery partition (use your own file name):
-   ```bash
-   fastboot flash recovery OrangeFox-R12.0_<patch>-Unofficial-marble.img
-   ```
-4. Reboot into recovery to verify:
-   ```bash
-   fastboot reboot recovery
-   ```
-
-**Update (OrangeFox already installed)**
-
-1. Download the `.zip` from Releases.
-2. Boot into OrangeFox and flash the zip.
-
+> ℹ️ The release has no `.img`, so the zip needs an already working custom recovery to be flashed from.
 > ⚠️ Make sure the bootloader is unlocked before flashing.
 
 ## 📂 Repository Structure
