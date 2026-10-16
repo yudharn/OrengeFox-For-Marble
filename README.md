@@ -24,8 +24,7 @@ at build time, builds the recovery, and publishes the result as a GitHub Release
 
 | Market Name | Codename |
 | --- | --- |
-| POCO F5 | `marble` |
-| Redmi Note 12 Turbo | `marble` |
+| POCO F5 / Redmi Note 12 Turbo | `marble` |
 
 The device tree used by default is **[Ctapchuk/android_device_xiaomi_marble-OFRP](https://github.com/Ctapchuk/android_device_xiaomi_marble-OFRP)** (branch `fox_12.1`).
 
