@@ -1,31 +1,33 @@
 <p align="center">
   
-  ![Orengefox For Marble](assets/social-preview.png)
+  ![OrangeFox For Marble](assets/social-preview.png)
 
 <p align="center">
 
   <img src="https://img.shields.io/badge/OrangeFox-Recovery-FF6E1E?style=for-the-badge&logo=android&logoColor=white" />
-  <img src="https://img.shields.io/badge/Device-marble%20%7C%20marblein-blue?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Device-marble-blue?style=for-the-badge" />
   <img src="https://img.shields.io/badge/License-Apache%202.0-green?style=for-the-badge" />
 </p>
 
 <h1 align="center">OrangeFox Recovery — For Marble</h1>
 <p align="center">
-<b>OrangeFox Recovery Project (OFRP)</b> device tree for <b>Redmi Note 12 Turbo</b> (<code>marble</code>) & <b>POCO F5</b> (<code>marblein</code>)
+GitHub Actions build for <b>OrangeFox Recovery Project (OFRP)</b> on <b>POCO F5</b> / <b>Redmi Note 12 Turbo</b> (<code>marble</code>)
 </p>
 
 ---
 
 ## 📖 About
 
-This repository contains the device tree used to build **OrangeFox Recovery** for the following Xiaomi devices:
+This repository **does not contain a device tree**. It contains a GitHub Actions workflow
+(`.github/workflows/OrengeFox.yml`) that syncs the OrangeFox `fox_12.1` sources, clones the device tree
+at build time, builds the recovery, and publishes the result as a GitHub Release.
 
 | Market Name | Codename |
 | --- | --- |
+| POCO F5 | `marble` |
 | Redmi Note 12 Turbo | `marble` |
-| POCO F5 | `marblein` |
 
-This device tree is based on **[Ctapchuk/android_device_xiaomi_marble-OFRP](https://github.com/Ctapchuk/android_device_xiaomi_marble-OFRP)**.
+The device tree used by default is **[Ctapchuk/android_device_xiaomi_marble-OFRP](https://github.com/Ctapchuk/android_device_xiaomi_marble-OFRP)** (branch `fox_12.1`).
 
 ## ✨ Features
 
@@ -36,44 +38,56 @@ This device tree is based on **[Ctapchuk/android_device_xiaomi_marble-OFRP](http
 - Data decryption support (format data-friendly)
 - MTP, ADB sideload, and ADB shell
 
+## 🔨 How to build
+
+1. Open the **Actions** tab → **Recovery OFOX Build (fox_12.1) — marble** → **Run workflow**.
+2. Keep the defaults, or change the inputs (device tree URL/branch, maintainer name, patch version).
+3. Wait for the job to finish (about 1 hour). The `.img`, `.zip` and their `.md5` files appear under **Releases**.
+
+Only the repository owner can start the workflow. If a build fails, the full `build.log` is attached to the run as an artifact for 7 days.
+
 ## 📥 Installation
 
-1. Download the built OrangeFox image or zip
-2. Flash Orengefox.zip in Recovery
-3. Boot into fastboot mode: `adb reboot bootloader`
-4. Flash it to the boot/recovery partition:
+Release files are named like `OrangeFox-R12.0_<patch>-Unofficial-marble.img` / `.zip`.
+
+**First install**
+
+1. Download the `.img` from Releases.
+2. Boot into fastboot mode: `adb reboot bootloader`
+3. Flash it to the recovery partition (use your own file name):
    ```bash
-   fastboot flash recovery orangefox-marble.img
+   fastboot flash recovery OrangeFox-R12.0_<patch>-Unofficial-marble.img
    ```
-5. Reboot into recovery to verify:
+4. Reboot into recovery to verify:
    ```bash
    fastboot reboot recovery
    ```
 
+**Update (OrangeFox already installed)**
+
+1. Download the `.zip` from Releases.
+2. Boot into OrangeFox and flash the zip.
+
 > ⚠️ Make sure the bootloader is unlocked before flashing.
 
-## 📂 Main Structure
+## 📂 Repository Structure
 
 ```
-device/xiaomi/marble/
-├── prebuilt/
-├── recovery/root/
-├── security/
-├── AndroidProducts.mk
-├── BoardConfig.mk
-├── device.mk
-├── fox_marble.mk
-├── twrp_marble.mk
-├── recovery.fstab
-├── vendor.prop
-└── vendorsetup.sh
+.
+├── .github/
+│   ├── dependabot.yml
+│   └── workflows/
+│       └── OrengeFox.yml
+├── assets/
+│   └── social-preview.png
+└── README.md
 ```
 
 ## 🙏 Credits & Source
 
 - **OrangeFox Recovery Project** — https://orangefox.tech
-- Base device tree: [Ctapchuk/android_device_xiaomi_marble-OFRP](https://github.com/Ctapchuk/android_device_xiaomi_marble-OFRP)
-- The TWRP/OFRP community for Xiaomi `marble` & `marblein` devices
+- Device tree: [Ctapchuk/android_device_xiaomi_marble-OFRP](https://github.com/Ctapchuk/android_device_xiaomi_marble-OFRP)
+- The TWRP/OFRP community for Xiaomi `marble` devices
 
 ## ⚠️ Disclaimer
 
