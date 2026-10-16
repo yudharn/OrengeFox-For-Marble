@@ -53,15 +53,20 @@ jobs:
   build:
     if: github.event.repository.owner.id == github.event.sender.id
     runs-on: ubuntu-24.04
+    # Build normal ~1 jam (sync ~8 mnt + build ~40 mnt). Batas ini mencegah job macet menghabiskan 6 jam menit Actions.
+    timeout-minutes: 240
     permissions:
       contents: write
     steps:
 
-    # You might want to Checkout your repo first, but not mandatory
+    # Tidak ada input workflow yang di-interpolasi langsung ke script `run:`. Semua lewat `env:` pada step
+    # yang membutuhkannya, lalu dipakai sebagai "$VAR" (mencegah shell/expression injection).
     - name: Check Out
       uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
-    # Third-party actions di-pin ke SHA (bukan @main/@master) karena job ini punya token contents:write.
+    # Third-party actions di-pin ke SHA (bukan @main/@master/tag) karena job ini punya token contents:write.
     # SHA di bawah = versi yang jalan di build sukses 2026-10-12. Dependabot (github-actions) akan menaikkannya.
     - name: Free disk space (pre-cleanup)
       uses: jlumbroso/free-disk-space@36e9a5af4eddb91fc11aec4c6f6f79b3cc0cb523 # main
@@ -91,9 +96,13 @@ jobs:
       id: pwd
 
     - name: Prepare the build environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo apt update && sudo apt upgrade -y
-        DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
+        # apt-get (bukan apt) supaya tidak muncul "WARNING: apt does not have a stable CLI interface"
+        sudo -E apt-get update
+        sudo -E apt-get upgrade -y
+        sudo -E apt-get install -yq \
             linux-modules-extra-$(uname -r) \
             git python3 tar aria2
         git clone https://gitlab.com/OrangeFox/misc/scripts.git
@@ -101,26 +110,32 @@ jobs:
         sudo bash setup/android_build_env.sh
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
+    # problem-matcher: false -> output kompiler/build AOSP berformat "file:line: warning: ..." tidak diubah
+    # jadi annotation ##[warning] (di build 2026-10-12 ini yang memunculkan 2 warning sepolicy di ringkasan run).
+    # Semua output tetap ada di log; error build tetap terlihat di log dan di artifact build.log.
     - name: Install OpenJDK
       uses: actions/setup-java@v6
       with:
         distribution: 'zulu'
         java-version: '11'
+        problem-matcher: false
 
     - name: Setup SSH Keys
       if: ${{ startsWith(github.event.inputs.SYNC_URL, 'git@') ||
           startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@') ||
           startsWith(github.event.inputs.COMMON_TREE_URL, 'git@') }}
-      uses: webfactory/ssh-agent@v0.10.0
+      uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
       with:
           ssh-private-key: |
             ${{ secrets.SSH_PRIVATE_KEY }}
 
     - name: Sync OrangeFox sources and minimal manifest
       id: sync
+      env:
+        SYNC_URL: ${{ github.event.inputs.SYNC_URL }}
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}
-        git clone ${{ github.event.inputs.SYNC_URL }} sync
+        git clone "$SYNC_URL" sync
         cd sync
         SYNC_COMMIT=$(git rev-parse HEAD)
         SYNC_COMMIT_DATE=$(git log -1 --format=%cI)
@@ -148,9 +163,11 @@ jobs:
           exit 1
         fi
         # orangefox_sync.sh tetap lanjut walau patch gagal (mis. patch-vendor-twrp-fox_12.1.diff tidak ada di repo sync).
-        # Jadikan terlihat sebagai annotation supaya tidak tenggelam di log panjang.
+        # Cukup dicatat di log (bukan annotation): langkah "Apply vendor/twrp soong include (fallback)" di bawah
+        # menangani kasus ini dan baru memunculkan ::warning:: kalau fallback-nya sendiri gagal.
         if grep -q 'Failed to patch' "$SYNC_LOG"; then
-          echo "::warning::orangefox_sync.sh melaporkan patch gagal: $(grep -m3 -E 'Failed to patch|No such file or directory' "$SYNC_LOG" | tr '\n' ' ')"
+          echo "== INFO: orangefox_sync.sh melaporkan patch gagal: $(grep -m1 -E 'Failed to patch' "$SYNC_LOG")"
+          echo "== INFO: fallback untuk vendor/twrp dijalankan di langkah berikutnya =="
         fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
@@ -191,21 +208,29 @@ jobs:
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Clone device tree
+      env:
+        DEVICE_TREE_URL: ${{ github.event.inputs.DEVICE_TREE_URL }}
+        DEVICE_TREE_BRANCH: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}
+        DEVICE_PATH: ${{ github.event.inputs.DEVICE_PATH }}
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_12.1
-        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
+        git clone "$DEVICE_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$DEVICE_PATH"
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Clone common tree
       if: |
         github.event.inputs.COMMON_TREE_URL != ''
         && github.event.inputs.COMMON_PATH != ''
+      env:
+        COMMON_TREE_URL: ${{ github.event.inputs.COMMON_TREE_URL }}
+        COMMON_PATH: ${{ github.event.inputs.COMMON_PATH }}
+        COMMON_TREE_BRANCH: ${{ github.event.inputs.COMMON_TREE_BRANCH }}
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_12.1
-        if [ -n "${{ github.event.inputs.COMMON_TREE_BRANCH }}" ]; then
-          git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.COMMON_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
+        if [ -n "$COMMON_TREE_BRANCH" ]; then
+          git clone "$COMMON_TREE_URL" -b "$COMMON_TREE_BRANCH" "./$COMMON_PATH"
         else
-          git clone ${{ github.event.inputs.COMMON_TREE_URL }} ./${{ github.event.inputs.COMMON_PATH }}
+          git clone "$COMMON_TREE_URL" "./$COMMON_PATH"
         fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
@@ -248,7 +273,7 @@ jobs:
         # CATATAN: patch BOARD_PLAT_*_SEPOLICY_DIR dihapus. Di build 2026-10-12 patch itu tidak menemukan file
         # apa pun, dan 2 warning deprecated tetap muncul karena dibaca oleh build system AOSP sendiri
         # (build/make/core/soong_config.mk:194, system/sepolicy/Android.mk:57), bukan oleh device tree.
-        # Kedua warning itu tidak berbahaya.
+        # Kedua baris itu hanya teks log biasa dan tidak berbahaya.
         cd "$TREE"
 
         # $(warning) informatif bawaan OrangeFox -> $(info): output tetap ada, tidak jadi annotation
@@ -281,17 +306,21 @@ jobs:
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Building recovery
+      env:
+        IN_MAKEFILE_NAME: ${{ github.event.inputs.MAKEFILE_NAME }}
+        IN_BUILD_TARGET: ${{ github.event.inputs.BUILD_TARGET }}
+        OF_MAINTAINER: ${{ github.event.inputs.OF_MAINTAINER }}
+        FOX_MAINTAINER_PATCH_VERSION: ${{ github.event.inputs.FOX_MAINTAINER_PATCH_VERSION }}
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_12.1
         set +e
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
         export LC_ALL="C"
-        export OF_MAINTAINER="${{ github.event.inputs.OF_MAINTAINER }}"
-        export FOX_MAINTAINER_PATCH_VERSION="${{ github.event.inputs.FOX_MAINTAINER_PATCH_VERSION }}"
+        # OF_MAINTAINER dan FOX_MAINTAINER_PATCH_VERSION sudah di-export lewat env: step ini.
         export OF_SCREEN_H=2400
 
-        PRODUCT="${{ github.event.inputs.MAKEFILE_NAME }}"
+        PRODUCT="$IN_MAKEFILE_NAME"
         VARIANT="eng"
 
         echo "== lunch ${PRODUCT}-${VARIANT} =="
@@ -303,7 +332,7 @@ jobs:
         set -e
         set -o pipefail
         # Tidak perlu "make clean": runner baru, folder out/ belum ada.
-        mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all) 2>&1 | tee ${{ steps.pwd.outputs.workspace-folder }}/build.log
+        mka adbd "${IN_BUILD_TARGET}image" -j$(nproc --all) 2>&1 | tee ${{ steps.pwd.outputs.workspace-folder }}/build.log
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Upload build log (jika build gagal)
@@ -316,47 +345,36 @@ jobs:
 
     - name: Verify build artifacts
       id: verify
+      env:
+        IN_DEVICE_NAME: ${{ github.event.inputs.DEVICE_NAME }}
       run: |
         BUILD_LOG="${{ steps.pwd.outputs.workspace-folder }}/build.log"
-        PRODUCT_OUT="${{ steps.pwd.outputs.workspace-folder }}/fox_12.1/out/target/product/${{ github.event.inputs.DEVICE_NAME }}"
+        PRODUCT_OUT="${{ steps.pwd.outputs.workspace-folder }}/fox_12.1/out/target/product/$IN_DEVICE_NAME"
 
-        IMG_PATH=$(grep -m1 '^Recovery image:' "$BUILD_LOG" | sed 's/^Recovery image:[[:space:]]*//')
+        # Release hanya berisi file .zip OrangeFox. File .img tetap dibuild tapi tidak diupload.
         ZIP_PATH=$(grep -m1 '^Recovery zip:' "$BUILD_LOG" | sed 's/^Recovery zip:[[:space:]]*//')
 
         # Catatan: setelah lunch, OUT_DIR berubah ke $PRODUCT_OUT, jadi hasil build ada di
         # $PRODUCT_OUT/target/product/<device>/ (path ganda). Fallback find di bawah menutupi ini.
-        if [ -z "$IMG_PATH" ] || [ ! -f "$IMG_PATH" ]; then
-          IMG_PATH=$(find "$PRODUCT_OUT" -type f -iname 'OrangeFox-*.img' 2>/dev/null | head -n1)
-        fi
         if [ -z "$ZIP_PATH" ] || [ ! -f "$ZIP_PATH" ]; then
           ZIP_PATH=$(find "$PRODUCT_OUT" -type f -iname 'OrangeFox-*.zip' 2>/dev/null | head -n1)
         fi
 
-        echo "img: ${IMG_PATH:-<tidak ditemukan>}"
         echo "zip: ${ZIP_PATH:-<tidak ditemukan>}"
 
-        if [ -z "$IMG_PATH" ] || [ ! -f "$IMG_PATH" ] || [ -z "$ZIP_PATH" ] || [ ! -f "$ZIP_PATH" ]; then
-          echo "::error::Tidak bisa menemukan file .img/.zip OrangeFox yang valid (lewat build.log maupun pencarian rekursif di $PRODUCT_OUT)."
+        if [ -z "$ZIP_PATH" ] || [ ! -f "$ZIP_PATH" ]; then
+          echo "::error::Tidak bisa menemukan file .zip OrangeFox yang valid (lewat build.log maupun pencarian rekursif di $PRODUCT_OUT)."
           echo "== Struktur $PRODUCT_OUT sampai 3 level (untuk debug) =="
           find "$PRODUCT_OUT" -maxdepth 3 2>/dev/null
           exit 1
         fi
 
-        echo "img-path=$IMG_PATH" >> "$GITHUB_OUTPUT"
         echo "zip-path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
 
-        # File .md5 dibuat oleh build OrangeFox; ikut diupload kalau ada.
-        if [ -f "$IMG_PATH.md5" ]; then echo "img-md5-path=$IMG_PATH.md5" >> "$GITHUB_OUTPUT"; fi
-        if [ -f "$ZIP_PATH.md5" ]; then echo "zip-md5-path=$ZIP_PATH.md5" >> "$GITHUB_OUTPUT"; fi
-
     - name: Upload to Release
-      uses: softprops/action-gh-release@v3
+      uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
       with:
-        files: |
-          ${{ steps.verify.outputs.img-path }}
-          ${{ steps.verify.outputs.zip-path }}
-          ${{ steps.verify.outputs.img-md5-path }}
-          ${{ steps.verify.outputs.zip-md5-path }}
+        files: ${{ steps.verify.outputs.zip-path }}
         name: ${{ github.event.inputs.DEVICE_NAME }}-fox12-${{ github.run_id }}
         tag_name: ${{ github.run_id }}
         fail_on_unmatched_files: true
@@ -366,7 +384,7 @@ jobs:
           | 📱 **Device** | POCO F5 / Redmi Note 12 Turbo (`${{ github.event.inputs.DEVICE_NAME }}`) |
           | 🦊 **Recovery** | OrangeFox Recovery Project |
           | 🌿 **Manifest** | fox_12.1 (STABLE) |
-          | 🎯 **Build Target** | `${{ github.event.inputs.BUILD_TARGET }}image` |
+          | 🎯 **Build Target** | `${{ github.event.inputs.BUILD_TARGET }}image` (release: flashable `.zip` only) |
           | 🎨 **Variant** | Default (HyperOS/stock-tuned) |
           | 📦 **Device Tree** | ${{ github.event.inputs.DEVICE_TREE_URL }} |
           | 🌿 **Tree Branch** | `${{ github.event.inputs.DEVICE_TREE_BRANCH }}` |
@@ -379,4 +397,3 @@ jobs:
           ### ✨ OrangeFox Recovery — marble ✨
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
