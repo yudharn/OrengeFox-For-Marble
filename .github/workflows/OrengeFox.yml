@@ -270,11 +270,28 @@ jobs:
           fi
         done
 
-        # CATATAN: patch BOARD_PLAT_*_SEPOLICY_DIR dihapus. Di build 2026-10-12 patch itu tidak menemukan file
-        # apa pun, dan 2 warning deprecated tetap muncul karena dibaca oleh build system AOSP sendiri
-        # (build/make/core/soong_config.mk:194, system/sepolicy/Android.mk:57), bukan oleh device tree.
-        # Kedua baris itu hanya teks log biasa dan tidak berbahaya.
+        # Dua warning "BOARD_PLAT_*_SEPOLICY_DIR has been deprecated" berasal dari build system AOSP sendiri, yang
+        # membaca variabel lama itu untuk kompatibilitas: build/make/core/soong_config.mk (baris SystemExt*SepolicyDirs)
+        # dan system/sepolicy/Android.mk (blok ifneq ... BOARD_PLAT_*). Kalau tidak ada device/vendor/bootable yang
+        # MENGISI variabel itu, pembacaan tersebut selalu kosong, jadi aman dibuang (hasil build sama).
         cd "$TREE"
+        SOONG_CFG=build/make/core/soong_config.mk
+        SEPOLICY_MK=system/sepolicy/Android.mk
+        if grep -rqE --include='*.mk' '^[[:space:]]*BOARD_PLAT_(PUBLIC|PRIVATE)_SEPOLICY_DIR[[:space:]]*[:+?]?=' device vendor bootable 2>/dev/null; then
+          echo "BOARD_PLAT_*_SEPOLICY_DIR diisi oleh tree/device -- patch sepolicy dilewati (warning deprecated tetap muncul, tidak berbahaya)"
+        elif [ ! -f "$SOONG_CFG" ] || [ ! -f "$SEPOLICY_MK" ]; then
+          echo "::warning::$SOONG_CFG atau $SEPOLICY_MK tidak ada -- patch sepolicy dilewati"
+        else
+          sed -i -E 's/[[:space:]]+\$\(BOARD_PLAT_(PUBLIC|PRIVATE)_SEPOLICY_DIR\)//g' "$SOONG_CFG"
+          sed -i -E '/^ifneq \(,\$\(BOARD_PLAT_(PUBLIC|PRIVATE)_SEPOLICY_DIR\)\)$/,/^endif$/d' "$SEPOLICY_MK"
+          LEFT=$(grep -nE 'BOARD_PLAT_(PUBLIC|PRIVATE)_SEPOLICY_DIR' "$SOONG_CFG" "$SEPOLICY_MK" || true)
+          if [ -n "$LEFT" ]; then
+            echo "::warning::masih ada BOARD_PLAT_*_SEPOLICY_DIR setelah patch (layout file berbeda dari perkiraan):"
+            echo "$LEFT"
+          else
+            echo "Patched: pembacaan BOARD_PLAT_*_SEPOLICY_DIR dibuang dari soong_config.mk dan sepolicy/Android.mk"
+          fi
+        fi
 
         # $(warning) informatif bawaan OrangeFox -> $(info): output tetap ada, tidak jadi annotation
         sed -i -E 's/\$\(warning ("FOX_MISCELLANEOUS_ROOT_DIRECTORY" is used)/$(info \1/' bootable/recovery/orangefox.mk 2>/dev/null || true
@@ -397,3 +414,4 @@ jobs:
           ### ✨ OrangeFox Recovery — marble ✨
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
