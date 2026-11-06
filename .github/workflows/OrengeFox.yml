@@ -69,7 +69,7 @@ jobs:
     # Third-party actions di-pin ke SHA (bukan @main/@master/tag) karena job ini punya token contents:write.
     # SHA di bawah = versi yang jalan di build sukses 2026-10-12. Dependabot (github-actions) akan menaikkannya.
     - name: Free disk space (pre-cleanup)
-      uses: jlumbroso/free-disk-space@36e9a5af4eddb91fc11aec4c6f6f79b3cc0cb523 # main
+      uses: jlumbroso/free-disk-space@cf1e78c50ca91e757bab3edc229027eebfc07871 # main
       with:
         preinstalled-runtimes: true
         android: true
