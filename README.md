@@ -1,6 +1,6 @@
 <p align="center">
   
-  ![OrangeFox For Marble](assets/social-preview.png)
+  ![OrengeFox For Marble](assets/social-preview.png)
 
 <p align="center">
 
